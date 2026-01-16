@@ -48,6 +48,15 @@ coverage.xml
 *.cover
 *.py.cover
 .hypothesis/
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Node modules
+node_modules/
+package-lock.json
 .pytest_cache/
 cover/
 
