@@ -23,6 +23,8 @@ def health_check():
 def analyze_text():
     """Analyze sentiment of provided text"""
     data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Invalid JSON'}), 400
     text = data.get('text', '')
     
     if not text:
@@ -35,7 +37,11 @@ def analyze_text():
 def fetch_posts():
     """Fetch and analyze finance posts from X"""
     query = request.args.get('query', '#stocks OR #finance OR #investing')
-    max_results = int(request.args.get('max_results', 10))
+    try:
+        max_results = int(request.args.get('max_results', 10))
+        max_results = max(1, min(max_results, 100))  # Clamp between 1 and 100
+    except ValueError:
+        return jsonify({'error': 'Invalid max_results parameter'}), 400
     
     try:
         posts = x_client.search_recent_posts(query, max_results)
@@ -63,7 +69,11 @@ def fetch_posts():
 @app.route('/api/posts', methods=['GET'])
 def get_posts():
     """Get stored posts from database"""
-    limit = int(request.args.get('limit', 50))
+    try:
+        limit = int(request.args.get('limit', 50))
+        limit = max(1, min(limit, 1000))  # Clamp between 1 and 1000
+    except ValueError:
+        return jsonify({'error': 'Invalid limit parameter'}), 400
     posts = db.get_recent_posts(limit)
     return jsonify({'posts': posts, 'count': len(posts)})
 
@@ -76,7 +86,11 @@ def get_stats():
 @app.route('/api/trends', methods=['GET'])
 def get_trends():
     """Get sentiment trends over time"""
-    days = int(request.args.get('days', 7))
+    try:
+        days = int(request.args.get('days', 7))
+        days = max(1, min(days, 365))  # Clamp between 1 and 365
+    except ValueError:
+        return jsonify({'error': 'Invalid days parameter'}), 400
     trends = db.get_sentiment_trends(days)
     return jsonify({'trends': trends})
 
