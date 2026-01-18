@@ -19,9 +19,9 @@ class TickerExtractor:
         'ALSO', 'EACH', 'BOTH', 'FEW', 'LESS', 'CEO', 'CFO', 'CTO', 'COO',
         'IPO', 'ETF', 'SEC', 'NYSE', 'NASDAQ', 'DOW', 'SP', 'WSB', 'DD',
         'YOLO', 'FOMO', 'FUD', 'IMO', 'TBH', 'ASAP', 'FYI', 'BTW', 'LOL',
-        'OMG', 'WTF', 'IMO', 'IMHO', 'ELI', 'TL', 'DR', 'TLDR', 'ETA',
+        'OMG', 'WTF', 'IMHO', 'ELI', 'TL', 'DR', 'TLDR', 'ETA',
         'AMA', 'PSA', 'OC', 'NSFW', 'SFW', 'EDIT', 'UPDATE', 'PM', 'AM',
-        'EST', 'PST', 'MST', 'CST', 'GMT', 'UTC', 'USA', 'UK', 'EU', 'NA'
+        'EST', 'PST', 'MST', 'CST', 'GMT', 'UTC', 'UK', 'EU', 'NA'
     }
     
     def __init__(self, known_tickers_file='known_tickers.json'):

@@ -703,16 +703,19 @@ class AnalyticsRepository:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
-            date_filter = ''
+            # Build date filter conditions and params
+            where_conditions = ['1=1']
             params = []
             
             if start_date:
-                date_filter += ' AND p.created_at >= ?'
+                where_conditions.append('p.created_at >= ?')
                 params.append(start_date)
             
             if end_date:
-                date_filter += ' AND p.created_at <= ?'
+                where_conditions.append('p.created_at <= ?')
                 params.append(end_date)
+            
+            where_clause = ' AND '.join(where_conditions)
             
             # Most discussed stocks
             cursor.execute(f'''
@@ -721,7 +724,7 @@ class AnalyticsRepository:
                 FROM tickers t
                 INNER JOIN post_tickers pt ON t.id = pt.ticker_id
                 INNER JOIN posts p ON pt.post_id = p.id
-                WHERE 1=1 {date_filter}
+                WHERE {where_clause}
                 GROUP BY t.symbol
                 ORDER BY post_count DESC
                 LIMIT 10
@@ -740,7 +743,7 @@ class AnalyticsRepository:
                 FROM tickers t
                 INNER JOIN post_tickers pt ON t.id = pt.ticker_id
                 INNER JOIN posts p ON pt.post_id = p.id
-                WHERE p.sentiment_label = 'positive' {date_filter}
+                WHERE p.sentiment_label = 'positive' AND {where_clause}
                 GROUP BY t.symbol
                 HAVING post_count >= 3
                 ORDER BY avg_sentiment DESC
@@ -760,7 +763,7 @@ class AnalyticsRepository:
                 FROM tickers t
                 INNER JOIN post_tickers pt ON t.id = pt.ticker_id
                 INNER JOIN posts p ON pt.post_id = p.id
-                WHERE p.sentiment_label = 'negative' {date_filter}
+                WHERE p.sentiment_label = 'negative' AND {where_clause}
                 GROUP BY t.symbol
                 HAVING post_count >= 3
                 ORDER BY avg_sentiment ASC
@@ -780,7 +783,7 @@ class AnalyticsRepository:
                 FROM sectors s
                 INNER JOIN post_sectors ps ON s.id = ps.sector_id
                 INNER JOIN posts p ON ps.post_id = p.id
-                WHERE 1=1 {date_filter}
+                WHERE {where_clause}
                 GROUP BY s.name, p.sentiment_label
             ''', params)
             
@@ -800,7 +803,7 @@ class AnalyticsRepository:
                 SELECT AVG(sentiment_score) as avg_score,
                        sentiment_label, COUNT(*) as count
                 FROM posts
-                WHERE 1=1 {date_filter}
+                WHERE {where_clause}
                 GROUP BY sentiment_label
             ''', params)
             

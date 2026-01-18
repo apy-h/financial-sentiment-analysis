@@ -111,8 +111,8 @@ function MarketPulse({ data, loading }) {
                 <span className="rank">{idx + 1}</span>
                 <span className="ticker">{stock.ticker}</span>
                 <span className="count">{stock.post_count} posts</span>
-                <span className={`score ${stock.avg_sentiment_score >= 0 ? 'positive' : 'negative'}`}>
-                  {stock.avg_sentiment_score.toFixed(2)}
+                <span className={`score ${stock.avg_sentiment_score != null && stock.avg_sentiment_score >= 0 ? 'positive' : 'negative'}`}>
+                  {stock.avg_sentiment_score != null ? stock.avg_sentiment_score.toFixed(2) : 'N/A'}
                 </span>
               </div>
             ))}

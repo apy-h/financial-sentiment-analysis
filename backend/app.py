@@ -91,11 +91,13 @@ def analyze_text():
     """Analyze sentiment of provided text"""
     data = request.get_json()
     if not data:
-        return jsonify(*error_response('INVALID_JSON', 'Invalid JSON'))
+        response, status_code = error_response('INVALID_JSON', 'Invalid JSON')
+        return jsonify(response), status_code
     
     text = data.get('text', '')
     if not text:
-        return jsonify(*error_response('NO_TEXT', 'No text provided'))
+        response, status_code = error_response('NO_TEXT', 'No text provided')
+        return jsonify(response), status_code
 
     sentiment = sentiment_analyzer.analyze(text)
     
