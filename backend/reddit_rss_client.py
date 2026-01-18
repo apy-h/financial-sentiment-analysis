@@ -4,6 +4,7 @@ import requests
 import html
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from dateutil import parser, tz
 
 
 class RedditRSSClient:
@@ -63,8 +64,42 @@ class RedditRSSClient:
 
         return collected[:max_results]
 
+    def _parse_timestamp_with_timezone(self, timestamp_str):
+        """
+        Parse timestamp preserving timezone info
+        
+        Args:
+            timestamp_str: ISO format timestamp string
+            
+        Returns:
+            Tuple of (iso_timestamp, timezone_name)
+        """
+        try:
+            dt = parser.isoparse(timestamp_str)
+            # If no timezone info, assume UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz.UTC)
+            
+            # Get timezone name
+            tzname = dt.tzname() or 'UTC'
+            
+            return dt.isoformat(), tzname
+        except Exception:
+            # Fallback to current UTC time
+            now = datetime.now(tz.UTC)
+            return now.isoformat(), 'UTC'
+    
     def _parse_feed(self, content, subreddit):
-        """Parse Atom/RSS entries from Reddit feed content."""
+        """
+        Parse Atom/RSS entries from Reddit feed content with full metadata extraction
+        
+        Args:
+            content: XML content from RSS feed
+            subreddit: Subreddit name
+            
+        Returns:
+            List of post dictionaries with complete metadata
+        """
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         try:
             root = ET.fromstring(content)
@@ -80,36 +115,70 @@ class RedditRSSClient:
             published_el = entry.find('atom:published', ns)
             link_el = entry.find('atom:link', ns)
             author_el = entry.find('atom:author/atom:name', ns)
+            id_el = entry.find('atom:id', ns)
 
+            # Extract title
             title = html.unescape(title_el.text) if title_el is not None and title_el.text else ''
+            
+            # Extract summary/content
             summary_raw = summary_el.text or '' if summary_el is not None else ''
             summary = html.unescape(summary_raw)
-            text_parts = [title.strip()]
+            
+            # Combine title and summary for text content
+            text_parts = []
+            if title.strip():
+                text_parts.append(title.strip())
             if summary.strip():
                 text_parts.append(summary.strip())
-            text = '\n\n'.join([t for t in text_parts if t])
+            text = '\n\n'.join(text_parts) if text_parts else '(no content)'
 
+            # Extract and parse timestamp with timezone
             created_str = (updated_el.text if updated_el is not None else None) or \
                           (published_el.text if published_el is not None else None)
-            try:
-                created_at = datetime.fromisoformat(created_str.replace('Z', '+00:00')).isoformat() if created_str else datetime.utcnow().isoformat()
-            except Exception:
-                created_at = datetime.utcnow().isoformat()
+            
+            if created_str:
+                created_at, timezone = self._parse_timestamp_with_timezone(created_str)
+            else:
+                now = datetime.now(tz.UTC)
+                created_at = now.isoformat()
+                timezone = 'UTC'
 
-            link = link_el.attrib.get('href') if link_el is not None else ''
+            # Extract URL (original Reddit post link)
+            url = link_el.attrib.get('href') if link_el is not None else ''
+            
+            # Extract author
             author = author_el.text if author_el is not None else 'unknown'
 
-            # entry id can contain URL; use last path segment for stability
-            raw_id = entry.find('atom:id', ns).text if entry.find('atom:id', ns) is not None else link
-            post_id = raw_id.split('/')[-1] if raw_id else f"reddit_{len(results)}"
+            # Extract Reddit post ID from entry ID or URL
+            raw_id = id_el.text if id_el is not None else url
+            
+            # Try to extract Reddit ID from the URL or ID
+            reddit_id = None
+            if raw_id:
+                # Reddit IDs are typically at the end of the URL
+                parts = raw_id.split('/')
+                for part in reversed(parts):
+                    if part and part not in ['comments', 'r', subreddit]:
+                        reddit_id = part
+                        break
+            
+            if not reddit_id:
+                reddit_id = f"post_{len(results)}"
+            
+            post_id = f'reddit_{reddit_id}'
 
             results.append({
-                'id': f'reddit_{post_id}',
-                'text': text or title or '(no title)',
-                'created_at': created_at,
-                'author_id': author,
+                'id': post_id,
+                'reddit_id': reddit_id,
+                'url': url,
                 'subreddit': subreddit,
+                'title': title,
+                'text': text,
+                'author': author,
+                'author_id': author,  # For backward compatibility
+                'created_at': created_at,
+                'timezone': timezone,
+                'link': url,  # For backward compatibility
                 'metrics': {},
-                'link': link,
             })
         return results

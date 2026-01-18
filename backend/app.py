@@ -3,6 +3,13 @@ from flask_cors import CORS
 from sentiment_analyzer import SentimentAnalyzer
 from reddit_rss_client import RedditRSSClient
 from database import Database
+from ticker_extractor import TickerExtractor
+from industry_classifier import IndustryClassifier
+from migrations import DatabaseMigration
+from api_utils import (
+    success_response, error_response, paginated_response,
+    validate_pagination_params, validate_date_param, validate_enum_param
+)
 import os
 import json
 from datetime import datetime
@@ -22,90 +29,441 @@ def load_config():
 
 config = load_config()
 
+# Run database migrations on startup
+print("Checking database schema...")
+migration = DatabaseMigration()
+if migration.needs_migration():
+    print("Running database migrations...")
+    migration.run_migrations()
+else:
+    print("Database schema is up to date")
+
 # Initialize components
 sentiment_analyzer = SentimentAnalyzer()
 reddit_client = RedditRSSClient()
 db = Database()
+ticker_extractor = TickerExtractor()
+industry_classifier = IndustryClassifier()
 
+# Legacy endpoints (backward compatibility)
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
 
 @app.route('/api/analyze', methods=['POST'])
+def analyze_text_legacy():
+    """Legacy analyze endpoint - redirects to v1"""
+    return analyze_text()
+
+@app.route('/api/fetch-posts', methods=['GET'])
+def fetch_posts_legacy():
+    """Legacy fetch posts endpoint - redirects to v1"""
+    return fetch_posts()
+
+@app.route('/api/posts', methods=['GET'])
+def get_posts_legacy():
+    """Legacy get posts endpoint - redirects to v1"""
+    return get_posts()
+
+@app.route('/api/stats', methods=['GET'])
+def get_stats_legacy():
+    """Legacy stats endpoint - redirects to v1"""
+    return get_stats()
+
+@app.route('/api/trends', methods=['GET'])
+def get_trends_legacy():
+    """Legacy trends endpoint - redirects to v1"""
+    return get_trends()
+
+# V1 API Endpoints
+@app.route('/api/v1/health', methods=['GET'])
+def health_check_v1():
+    """Health check endpoint"""
+    return jsonify(success_response({
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': 'v1'
+    }))
+
+@app.route('/api/v1/analyze', methods=['POST'])
 def analyze_text():
     """Analyze sentiment of provided text"""
     data = request.get_json()
     if not data:
-        return jsonify({'error': 'Invalid JSON'}), 400
+        return jsonify(*error_response('INVALID_JSON', 'Invalid JSON'))
+    
     text = data.get('text', '')
-
     if not text:
-        return jsonify({'error': 'No text provided'}), 400
+        return jsonify(*error_response('NO_TEXT', 'No text provided'))
 
     sentiment = sentiment_analyzer.analyze(text)
-    return jsonify(sentiment)
+    
+    # Extract tickers from text
+    tickers = ticker_extractor.extract_tickers(text)
+    
+    return jsonify(success_response({
+        'sentiment': sentiment,
+        'tickers': tickers
+    }))
 
-@app.route('/api/fetch-posts', methods=['GET'])
+@app.route('/api/v1/fetch-posts', methods=['GET'])
 def fetch_posts():
-    """Fetch and analyze finance posts from Reddit via RSS."""
+    """Fetch and analyze finance posts from Reddit via RSS"""
     query = request.args.get('query', 'stocks OR finance OR investing')
     try:
         max_results = int(request.args.get('max_results', 10))
-        max_results = max(1, min(max_results, 100))  # Clamp between 1 and 100
+        max_results = max(1, min(max_results, 100))
     except ValueError:
-        return jsonify({'error': 'Invalid max_results parameter'}), 400
+        return jsonify(*error_response('INVALID_PARAM', 'Invalid max_results parameter'))
 
     try:
         posts = reddit_client.fetch_posts(query, max_results)
         analyzed_posts = []
 
         for post in posts:
+            # Analyze sentiment
             sentiment = sentiment_analyzer.analyze(post['text'])
-            analyzed_post = {
+            
+            # Add sentiment to post data
+            post['sentiment'] = sentiment
+            
+            # Save post to database
+            post_id = db.posts.save_post(post)
+            
+            # Extract tickers from text
+            tickers = ticker_extractor.extract_tickers(post['text'])
+            
+            # Get industry/sector classification for tickers
+            classification = industry_classifier.classify_post_tickers(tickers)
+            
+            # Save tickers and their metadata
+            for ticker in tickers:
+                ticker_info = industry_classifier.get_ticker_info(ticker)
+                if ticker_info:
+                    db.tickers.save_ticker(
+                        ticker,
+                        ticker_info.get('company'),
+                        ticker_info.get('sector'),
+                        ticker_info.get('industry')
+                    )
+            
+            # Link post to tickers
+            if tickers:
+                db.tickers.link_post_to_tickers(post_id, tickers)
+                db.tickers.link_post_to_industries_and_sectors(
+                    post_id,
+                    classification['industries'],
+                    classification['sectors']
+                )
+            
+            analyzed_posts.append({
                 'id': post['id'],
                 'text': post['text'],
+                'title': post.get('title', ''),
+                'url': post.get('url', ''),
+                'subreddit': post.get('subreddit', ''),
+                'author': post.get('author', 'unknown'),
                 'created_at': post['created_at'],
-                'author_id': post.get('author_id', 'unknown'),
-                'sentiment': sentiment
-            }
-            analyzed_posts.append(analyzed_post)
-            db.save_post(analyzed_post)
+                'sentiment': sentiment,
+                'tickers': tickers
+            })
 
-        return jsonify({
+        return jsonify(success_response({
             'posts': analyzed_posts,
             'count': len(analyzed_posts)
-        })
+        }))
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error fetching posts: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify(*error_response('FETCH_ERROR', str(e), 500))
 
-@app.route('/api/posts', methods=['GET'])
+@app.route('/api/v1/posts', methods=['GET'])
 def get_posts():
-    """Get stored posts from database"""
+    """Get stored posts from database with filtering and pagination"""
     try:
-        limit = int(request.args.get('limit', 50))
-        limit = max(1, min(limit, 1000))  # Clamp between 1 and 1000
-    except ValueError:
-        return jsonify({'error': 'Invalid limit parameter'}), 400
-    posts = db.get_recent_posts(limit)
-    return jsonify({'posts': posts, 'count': len(posts)})
+        # Validate pagination
+        page = request.args.get('page', 1)
+        limit = request.args.get('limit', 50)
+        page, limit = validate_pagination_params(page, limit)
+        offset = (page - 1) * limit
+        
+        # Get filter parameters
+        ticker = request.args.get('ticker')
+        industry = request.args.get('industry')
+        sector = request.args.get('sector')
+        sentiment = validate_enum_param(
+            request.args.get('sentiment'),
+            ['positive', 'negative', 'neutral'],
+            'sentiment'
+        )
+        start_date = validate_date_param(request.args.get('start_date'), 'start_date')
+        end_date = validate_date_param(request.args.get('end_date'), 'end_date')
+        
+        # Get filtered posts
+        posts = db.posts.get_posts_filtered(
+            ticker=ticker,
+            industry=industry,
+            sector=sector,
+            sentiment=sentiment,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Get total count for pagination
+        total = db.posts.count_posts_filtered(
+            ticker=ticker,
+            industry=industry,
+            sector=sector,
+            sentiment=sentiment,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return jsonify(paginated_response(posts, page, limit, total))
+        
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        print(f"Error getting posts: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
 
-@app.route('/api/stats', methods=['GET'])
+@app.route('/api/v1/tickers', methods=['GET'])
+def get_tickers():
+    """Get all unique tickers"""
+    try:
+        tickers = db.tickers.get_tickers()
+        return jsonify(success_response({'tickers': tickers}))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/industries', methods=['GET'])
+def get_industries():
+    """Get all industries"""
+    try:
+        industries = db.industries.get_industries()
+        return jsonify(success_response({'industries': industries}))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/sectors', methods=['GET'])
+def get_sectors():
+    """Get all sectors"""
+    try:
+        sectors = db.industries.get_sectors()
+        return jsonify(success_response({'sectors': sectors}))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/stats', methods=['GET'])
 def get_stats():
-    """Get sentiment statistics"""
-    stats = db.get_sentiment_stats()
-    return jsonify(stats)
+    """Get sentiment statistics with optional filtering"""
+    try:
+        ticker = request.args.get('ticker')
+        industry = request.args.get('industry')
+        sector = request.args.get('sector')
+        start_date = validate_date_param(request.args.get('start_date'))
+        end_date = validate_date_param(request.args.get('end_date'))
+        
+        stats = db.analytics.get_sentiment_stats(
+            ticker=ticker,
+            industry=industry,
+            sector=sector,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return jsonify(success_response(stats))
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
 
-@app.route('/api/trends', methods=['GET'])
+@app.route('/api/v1/trends', methods=['GET'])
 def get_trends():
-    """Get sentiment trends over time"""
+    """Get sentiment trends over time with filtering"""
     try:
         days = int(request.args.get('days', 7))
-        days = max(1, min(days, 365))  # Clamp between 1 and 365
-    except ValueError:
-        return jsonify({'error': 'Invalid days parameter'}), 400
-    trends = db.get_sentiment_trends(days)
-    return jsonify({'trends': trends})
+        days = max(1, min(days, 365))
+        
+        ticker = request.args.get('ticker')
+        industry = request.args.get('industry')
+        sector = request.args.get('sector')
+        start_date = validate_date_param(request.args.get('start_date'))
+        end_date = validate_date_param(request.args.get('end_date'))
+        granularity = validate_enum_param(
+            request.args.get('granularity', 'day'),
+            ['day', 'week'],
+            'granularity'
+        )
+        
+        trends = db.analytics.get_sentiment_trends(
+            days=days,
+            ticker=ticker,
+            industry=industry,
+            sector=sector,
+            start_date=start_date,
+            end_date=end_date,
+            granularity=granularity
+        )
+        
+        return jsonify(success_response({'trends': trends}))
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/sentiment-by-ticker', methods=['GET'])
+def get_sentiment_by_ticker():
+    """Get sentiment breakdown per ticker"""
+    try:
+        ticker_param = request.args.get('tickers')
+        tickers = ticker_param.split(',') if ticker_param else None
+        start_date = validate_date_param(request.args.get('start_date'))
+        end_date = validate_date_param(request.args.get('end_date'))
+        
+        ticker_sentiments = db.analytics.get_sentiment_by_ticker(
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return jsonify(success_response({'ticker_sentiments': ticker_sentiments}))
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/sentiment-comparison', methods=['GET'])
+def get_sentiment_comparison():
+    """Compare sentiment of multiple tickers side-by-side"""
+    try:
+        ticker_param = request.args.get('tickers')
+        if not ticker_param:
+            return jsonify(*error_response('MISSING_PARAM', 'tickers parameter required'))
+        
+        tickers = [t.strip().upper() for t in ticker_param.split(',')]
+        start_date = validate_date_param(request.args.get('start_date'))
+        end_date = validate_date_param(request.args.get('end_date'))
+        
+        comparison_data = db.analytics.get_sentiment_by_ticker(
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return jsonify(success_response({'comparison': comparison_data}))
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/industry-heatmap', methods=['GET'])
+def get_industry_heatmap():
+    """Get industry-level sentiment aggregation for heatmap"""
+    try:
+        start_date = validate_date_param(request.args.get('start_date'))
+        end_date = validate_date_param(request.args.get('end_date'))
+        
+        # Get all industries
+        industries = db.industries.get_industries()
+        
+        # Get sentiment stats for each industry
+        heatmap_data = []
+        for industry_obj in industries:
+            industry_name = industry_obj['name']
+            stats = db.analytics.get_sentiment_stats(
+                industry=industry_name,
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            heatmap_data.append({
+                'industry': industry_name,
+                'total': stats['total'],
+                'sentiments': stats['by_sentiment']
+            })
+        
+        return jsonify(success_response({'heatmap': heatmap_data}))
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/market-pulse', methods=['GET'])
+def get_market_pulse():
+    """Get market pulse data (most discussed, most positive/negative, etc.)"""
+    try:
+        start_date = validate_date_param(request.args.get('start_date'))
+        end_date = validate_date_param(request.args.get('end_date'))
+        
+        pulse_data = db.analytics.get_market_pulse(
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return jsonify(success_response(pulse_data))
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        print(f"Error getting market pulse: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+@app.route('/api/v1/volume-sentiment-correlation', methods=['GET'])
+def get_volume_sentiment_correlation():
+    """Get post volume vs sentiment over time"""
+    try:
+        days = int(request.args.get('days', 7))
+        days = max(1, min(days, 365))
+        
+        ticker = request.args.get('ticker')
+        start_date = validate_date_param(request.args.get('start_date'))
+        end_date = validate_date_param(request.args.get('end_date'))
+        
+        trends = db.analytics.get_sentiment_trends(
+            days=days,
+            ticker=ticker,
+            start_date=start_date,
+            end_date=end_date,
+            granularity='day'
+        )
+        
+        # Calculate volume and average sentiment for each day
+        correlation_data = []
+        for trend in trends:
+            total_volume = trend['positive'] + trend['negative'] + trend['neutral']
+            
+            # Calculate weighted average sentiment score
+            # positive = 1, neutral = 0, negative = -1
+            if total_volume > 0:
+                avg_sentiment = (
+                    (trend['positive'] * 1.0 + trend['neutral'] * 0.0 + trend['negative'] * -1.0) 
+                    / total_volume
+                )
+            else:
+                avg_sentiment = 0
+            
+            correlation_data.append({
+                'date': trend['date'],
+                'volume': total_volume,
+                'avg_sentiment': round(avg_sentiment, 2),
+                'positive': trend['positive'],
+                'neutral': trend['neutral'],
+                'negative': trend['negative']
+            })
+        
+        return jsonify(success_response({'correlation': correlation_data}))
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
+    except Exception as e:
+        return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', config.get('server', {}).get('port', 5000)))
