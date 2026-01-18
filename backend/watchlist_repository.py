@@ -164,6 +164,9 @@ class WatchlistRepository:
             
         Returns:
             True if added, False if already exists
+            
+        Raises:
+            Exception: For database errors other than integrity violations
         """
         try:
             with self._get_connection() as conn:
@@ -176,6 +179,9 @@ class WatchlistRepository:
         except sqlite3.IntegrityError:
             # Ticker already in watchlist
             return False
+        except Exception as e:
+            print(f"Error adding ticker to watchlist: {e}")
+            raise
     
     def remove_ticker_from_watchlist(self, watchlist_id: int, ticker: str) -> bool:
         """

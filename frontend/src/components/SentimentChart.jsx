@@ -35,6 +35,11 @@ function SentimentChart({ trends, title = 'Sentiment Trends' }) {
       const sunday = new Date(monday)
       sunday.setDate(monday.getDate() + 6)
       
+      // Validate dates
+      if (isNaN(monday.getTime()) || isNaN(sunday.getTime())) {
+        return dateStr
+      }
+      
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
       const startMonth = monthNames[monday.getMonth()]
       const endMonth = monthNames[sunday.getMonth()]
@@ -49,6 +54,10 @@ function SentimentChart({ trends, title = 'Sentiment Trends' }) {
     // For daily format, convert to human-readable
     try {
       const date = new Date(dateStr)
+      // Validate date
+      if (isNaN(date.getTime())) {
+        return dateStr
+      }
       const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
                           'July', 'August', 'September', 'October', 'November', 'December']
       return `${monthNames[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`

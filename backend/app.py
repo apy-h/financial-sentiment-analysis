@@ -121,15 +121,21 @@ def analyze_text():
 def fetch_posts():
     """Fetch and analyze finance posts from Reddit via RSS"""
     query = request.args.get('query', 'stocks OR finance OR investing')
+    
+    # Validate max_results parameter
+    max_results_param = request.args.get('max_results', '100')
     try:
-        max_results = int(request.args.get('max_results', 100))
+        max_results = int(max_results_param)
         max_results = max(1, min(max_results, 500))
-    except ValueError:
-        return jsonify(*error_response('INVALID_PARAM', 'Invalid max_results parameter'))
+    except (ValueError, TypeError):
+        max_results = 100  # Use default if invalid
     
     # Get optional date range parameters
-    start_date = validate_date_param(request.args.get('start_date'), 'start_date')
-    end_date = validate_date_param(request.args.get('end_date'), 'end_date')
+    try:
+        start_date = validate_date_param(request.args.get('start_date'), 'start_date')
+        end_date = validate_date_param(request.args.get('end_date'), 'end_date')
+    except ValueError as e:
+        return jsonify(*error_response('INVALID_PARAM', str(e)))
 
     try:
         posts = reddit_client.fetch_posts(query, max_results, start_date, end_date)
