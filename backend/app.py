@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from sentiment_analyzer import SentimentAnalyzer
-from x_api_client import XAPIClient
+from reddit_rss_client import RedditRSSClient
 from database import Database
 import os
 from datetime import datetime
@@ -11,7 +11,7 @@ CORS(app)
 
 # Initialize components
 sentiment_analyzer = SentimentAnalyzer()
-x_client = XAPIClient()
+reddit_client = RedditRSSClient()
 db = Database()
 
 @app.route('/health', methods=['GET'])
@@ -26,27 +26,27 @@ def analyze_text():
     if not data:
         return jsonify({'error': 'Invalid JSON'}), 400
     text = data.get('text', '')
-    
+
     if not text:
         return jsonify({'error': 'No text provided'}), 400
-    
+
     sentiment = sentiment_analyzer.analyze(text)
     return jsonify(sentiment)
 
 @app.route('/api/fetch-posts', methods=['GET'])
 def fetch_posts():
-    """Fetch and analyze finance posts from X"""
-    query = request.args.get('query', '#stocks OR #finance OR #investing')
+    """Fetch and analyze finance posts from Reddit via RSS."""
+    query = request.args.get('query', 'stocks OR finance OR investing')
     try:
         max_results = int(request.args.get('max_results', 10))
         max_results = max(1, min(max_results, 100))  # Clamp between 1 and 100
     except ValueError:
         return jsonify({'error': 'Invalid max_results parameter'}), 400
-    
+
     try:
-        posts = x_client.search_recent_posts(query, max_results)
+        posts = reddit_client.fetch_posts(query, max_results)
         analyzed_posts = []
-        
+
         for post in posts:
             sentiment = sentiment_analyzer.analyze(post['text'])
             analyzed_post = {
@@ -58,7 +58,7 @@ def fetch_posts():
             }
             analyzed_posts.append(analyzed_post)
             db.save_post(analyzed_post)
-        
+
         return jsonify({
             'posts': analyzed_posts,
             'count': len(analyzed_posts)

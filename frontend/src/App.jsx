@@ -36,7 +36,7 @@ function App() {
   const fetchNewPosts = async () => {
     setLoading(true)
     setError(null)
-    
+
     try {
       const response = await axios.get(`${API_BASE}/api/fetch-posts?max_results=15`)
       await loadData() // Reload all data
@@ -51,7 +51,7 @@ function App() {
     <div className="app">
       <header className="header">
         <h1>📈 Finance Sentiment Analysis</h1>
-        <p>Real-time sentiment analysis of finance-related X posts using FinBERT</p>
+        <p>Real-time sentiment analysis of finance-related Reddit posts (RSS) using FinBERT</p>
       </header>
 
       <div className="controls">

@@ -32,7 +32,7 @@ A web application that performs real-time sentiment analysis on finance-related 
 - npm or yarn
 
 ### Backend Setup
-
+<!-- TODO: add venv -->
 1. Navigate to the backend directory:
 ```bash
 cd backend
@@ -134,7 +134,7 @@ X_BEARER_TOKEN=your_token_here
 This app uses **FinBERT** (ProsusAI/finbert), a pre-trained NLP model fine-tuned for financial sentiment analysis. It classifies text into three categories:
 
 - **Positive**: Optimistic financial sentiment
-- **Negative**: Pessimistic financial sentiment  
+- **Negative**: Pessimistic financial sentiment
 - **Neutral**: Neutral or factual financial information
 
 The model is specifically trained on financial texts and performs better than general-purpose sentiment models for finance-related content.
