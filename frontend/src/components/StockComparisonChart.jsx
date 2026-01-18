@@ -5,47 +5,41 @@ import EmptyState from './EmptyState'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
-function SentimentChart({ trends, title = 'Sentiment Trends' }) {
-  if (!trends || trends.length === 0) {
+function StockComparisonChart({ data }) {
+  if (!data || data.length === 0) {
     return (
       <div className="card">
-        <h2>{title}</h2>
+        <h2>Stock Comparison</h2>
         <EmptyState
-          title="No trend data available"
-          message="Adjust filters or fetch new posts to see trends"
+          title="No comparison data"
+          message="Select multiple tickers to compare"
         />
       </div>
     )
   }
 
-  const labels = trends.map(t => t.date).reverse()
-  const positiveData = trends.map(t => t.positive || 0).reverse()
-  const negativeData = trends.map(t => t.negative || 0).reverse()
-  const neutralData = trends.map(t => t.neutral || 0).reverse()
+  const labels = data.map(d => d.ticker)
+  const positiveData = data.map(d => d.sentiments?.positive || 0)
+  const neutralData = data.map(d => d.sentiments?.neutral || 0)
+  const negativeData = data.map(d => d.sentiments?.negative || 0)
 
-  const data = {
+  const chartData = {
     labels,
     datasets: [
       {
         label: 'Positive',
         data: positiveData,
-        backgroundColor: 'rgba(75, 192, 192, 0.6)',
-        borderColor: 'rgba(75, 192, 192, 1)',
-        borderWidth: 1,
-      },
-      {
-        label: 'Negative',
-        data: negativeData,
-        backgroundColor: 'rgba(255, 99, 132, 0.6)',
-        borderColor: 'rgba(255, 99, 132, 1)',
-        borderWidth: 1,
+        backgroundColor: 'rgba(75, 192, 192, 0.8)',
       },
       {
         label: 'Neutral',
         data: neutralData,
-        backgroundColor: 'rgba(54, 162, 235, 0.6)',
-        borderColor: 'rgba(54, 162, 235, 1)',
-        borderWidth: 1,
+        backgroundColor: 'rgba(54, 162, 235, 0.8)',
+      },
+      {
+        label: 'Negative',
+        data: negativeData,
+        backgroundColor: 'rgba(255, 99, 132, 0.8)',
       },
     ],
   }
@@ -59,7 +53,7 @@ function SentimentChart({ trends, title = 'Sentiment Trends' }) {
       },
       title: {
         display: true,
-        text: title,
+        text: 'Sentiment Distribution by Stock',
       },
       tooltip: {
         callbacks: {
@@ -71,23 +65,27 @@ function SentimentChart({ trends, title = 'Sentiment Trends' }) {
     },
     scales: {
       y: {
+        stacked: true,
         beginAtZero: true,
         title: {
           display: true,
           text: 'Number of Posts',
         },
       },
+      x: {
+        stacked: true,
+      },
     },
   }
 
   return (
     <div className="card">
-      <h2>{title}</h2>
+      <h2>Stock Comparison</h2>
       <div className="chart-container">
-        <Bar data={data} options={options} />
+        <Bar data={chartData} options={options} />
       </div>
     </div>
   )
 }
 
-export default SentimentChart
+export default StockComparisonChart
