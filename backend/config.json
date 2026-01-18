@@ -43,6 +43,7 @@
   },
   "server": {
     "port": 5000,
-    "debug": false
+    "debug": true,
+    "cors_origins": ["http://localhost:5173", "http://localhost:3000"]
   }
 }

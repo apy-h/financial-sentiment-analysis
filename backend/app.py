@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, send_from_directory
 from flask_cors import CORS
 from sentiment_analyzer import SentimentAnalyzer
 from reddit_rss_client import RedditRSSClient
@@ -18,8 +18,9 @@ import os
 import json
 from datetime import datetime
 
-app = Flask(__name__)
-CORS(app)
+# Configure Flask to serve static files from frontend build
+static_folder = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
+app = Flask(__name__, static_folder=static_folder, static_url_path='')
 
 # Load configuration
 def load_config():
@@ -29,9 +30,13 @@ def load_config():
             return json.load(f)
     except Exception as e:
         print(f"Warning: Could not load config.json: {e}")
-        return {'server': {'port': 5000, 'debug': False}}
+        return {'server': {'port': 5000, 'debug': True, 'cors_origins': ['http://localhost:5173', 'http://localhost:3000']}}
 
 config = load_config()
+
+# Configure CORS with allowed origins
+cors_origins = config.get('server', {}).get('cors_origins', ['http://localhost:5173', 'http://localhost:3000'])
+CORS(app, resources={r"/api/*": {"origins": cors_origins}})
 
 # Run database migrations on startup
 print("Checking database schema...")
@@ -101,17 +106,17 @@ def analyze_text():
     if not data:
         response, status_code = error_response('INVALID_JSON', 'Invalid JSON')
         return jsonify(response), status_code
-    
+
     text = data.get('text', '')
     if not text:
         response, status_code = error_response('NO_TEXT', 'No text provided')
         return jsonify(response), status_code
 
     sentiment = sentiment_analyzer.analyze(text)
-    
+
     # Extract tickers from text
     tickers = ticker_extractor.extract_tickers(text)
-    
+
     return jsonify(success_response({
         'sentiment': sentiment,
         'tickers': tickers
@@ -144,19 +149,19 @@ def fetch_posts():
         for post in posts:
             # Analyze sentiment
             sentiment = sentiment_analyzer.analyze(post['text'])
-            
+
             # Add sentiment to post data
             post['sentiment'] = sentiment
-            
+
             # Save post to database
             post_id = db.posts.save_post(post)
-            
+
             # Extract tickers from text
             tickers = ticker_extractor.extract_tickers(post['text'])
-            
+
             # Get industry/sector classification for tickers
             classification = industry_classifier.classify_post_tickers(tickers)
-            
+
             # Save tickers and their metadata
             for ticker in tickers:
                 ticker_info = industry_classifier.get_ticker_info(ticker)
@@ -167,7 +172,7 @@ def fetch_posts():
                         ticker_info.get('sector'),
                         ticker_info.get('industry')
                     )
-            
+
             # Link post to tickers
             if tickers:
                 db.tickers.link_post_to_tickers(post_id, tickers)
@@ -176,7 +181,7 @@ def fetch_posts():
                     classification['industries'],
                     classification['sectors']
                 )
-            
+
             analyzed_posts.append({
                 'id': post['id'],
                 'text': post['text'],
@@ -208,7 +213,7 @@ def get_posts():
         limit = request.args.get('limit', 50)
         page, limit = validate_pagination_params(page, limit)
         offset = (page - 1) * limit
-        
+
         # Get filter parameters
         ticker = request.args.get('ticker')
         industry = request.args.get('industry')
@@ -220,7 +225,7 @@ def get_posts():
         )
         start_date = validate_date_param(request.args.get('start_date'), 'start_date')
         end_date = validate_date_param(request.args.get('end_date'), 'end_date')
-        
+
         # Get filtered posts
         posts = db.posts.get_posts_filtered(
             ticker=ticker,
@@ -232,7 +237,7 @@ def get_posts():
             limit=limit,
             offset=offset
         )
-        
+
         # Get total count for pagination
         total = db.posts.count_posts_filtered(
             ticker=ticker,
@@ -242,9 +247,9 @@ def get_posts():
             start_date=start_date,
             end_date=end_date
         )
-        
+
         return jsonify(paginated_response(posts, page, limit, total))
-        
+
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
     except Exception as e:
@@ -289,7 +294,7 @@ def get_stats():
         sector = request.args.get('sector')
         start_date = validate_date_param(request.args.get('start_date'))
         end_date = validate_date_param(request.args.get('end_date'))
-        
+
         stats = db.analytics.get_sentiment_stats(
             ticker=ticker,
             industry=industry,
@@ -297,7 +302,7 @@ def get_stats():
             start_date=start_date,
             end_date=end_date
         )
-        
+
         return jsonify(success_response(stats))
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
@@ -310,7 +315,7 @@ def get_trends():
     try:
         days = int(request.args.get('days', 7))
         days = max(1, min(days, 365))
-        
+
         ticker = request.args.get('ticker')
         industry = request.args.get('industry')
         sector = request.args.get('sector')
@@ -321,7 +326,7 @@ def get_trends():
             ['day', 'week'],
             'granularity'
         )
-        
+
         trends = db.analytics.get_sentiment_trends(
             days=days,
             ticker=ticker,
@@ -331,7 +336,7 @@ def get_trends():
             end_date=end_date,
             granularity=granularity
         )
-        
+
         return jsonify(success_response({'trends': trends}))
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
@@ -346,13 +351,13 @@ def get_sentiment_by_ticker():
         tickers = ticker_param.split(',') if ticker_param else None
         start_date = validate_date_param(request.args.get('start_date'))
         end_date = validate_date_param(request.args.get('end_date'))
-        
+
         ticker_sentiments = db.analytics.get_sentiment_by_ticker(
             tickers=tickers,
             start_date=start_date,
             end_date=end_date
         )
-        
+
         return jsonify(success_response({'ticker_sentiments': ticker_sentiments}))
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
@@ -366,17 +371,17 @@ def get_sentiment_comparison():
         ticker_param = request.args.get('tickers')
         if not ticker_param:
             return jsonify(*error_response('MISSING_PARAM', 'tickers parameter required'))
-        
+
         tickers = [t.strip().upper() for t in ticker_param.split(',')]
         start_date = validate_date_param(request.args.get('start_date'))
         end_date = validate_date_param(request.args.get('end_date'))
-        
+
         comparison_data = db.analytics.get_sentiment_by_ticker(
             tickers=tickers,
             start_date=start_date,
             end_date=end_date
         )
-        
+
         return jsonify(success_response({'comparison': comparison_data}))
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
@@ -389,10 +394,10 @@ def get_industry_heatmap():
     try:
         start_date = validate_date_param(request.args.get('start_date'))
         end_date = validate_date_param(request.args.get('end_date'))
-        
+
         # Get all industries
         industries = db.industries.get_industries()
-        
+
         # Get sentiment stats for each industry
         heatmap_data = []
         for industry_obj in industries:
@@ -402,13 +407,13 @@ def get_industry_heatmap():
                 start_date=start_date,
                 end_date=end_date
             )
-            
+
             heatmap_data.append({
                 'industry': industry_name,
                 'total': stats['total'],
                 'sentiments': stats['by_sentiment']
             })
-        
+
         return jsonify(success_response({'heatmap': heatmap_data}))
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
@@ -421,12 +426,12 @@ def get_market_pulse():
     try:
         start_date = validate_date_param(request.args.get('start_date'))
         end_date = validate_date_param(request.args.get('end_date'))
-        
+
         pulse_data = db.analytics.get_market_pulse(
             start_date=start_date,
             end_date=end_date
         )
-        
+
         return jsonify(success_response(pulse_data))
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
@@ -442,11 +447,11 @@ def get_volume_sentiment_correlation():
     try:
         days = int(request.args.get('days', 7))
         days = max(1, min(days, 365))
-        
+
         ticker = request.args.get('ticker')
         start_date = validate_date_param(request.args.get('start_date'))
         end_date = validate_date_param(request.args.get('end_date'))
-        
+
         trends = db.analytics.get_sentiment_trends(
             days=days,
             ticker=ticker,
@@ -454,22 +459,22 @@ def get_volume_sentiment_correlation():
             end_date=end_date,
             granularity='day'
         )
-        
+
         # Calculate volume and average sentiment for each day
         correlation_data = []
         for trend in trends:
             total_volume = trend['positive'] + trend['negative'] + trend['neutral']
-            
+
             # Calculate weighted average sentiment score
             # positive = 1, neutral = 0, negative = -1
             if total_volume > 0:
                 avg_sentiment = (
-                    (trend['positive'] * 1.0 + trend['neutral'] * 0.0 + trend['negative'] * -1.0) 
+                    (trend['positive'] * 1.0 + trend['neutral'] * 0.0 + trend['negative'] * -1.0)
                     / total_volume
                 )
             else:
                 avg_sentiment = 0
-            
+
             correlation_data.append({
                 'date': trend['date'],
                 'volume': total_volume,
@@ -478,7 +483,7 @@ def get_volume_sentiment_correlation():
                 'neutral': trend['neutral'],
                 'negative': trend['negative']
             })
-        
+
         return jsonify(success_response({'correlation': correlation_data}))
     except ValueError as e:
         return jsonify(*error_response('INVALID_PARAM', str(e)))
@@ -756,6 +761,15 @@ def remove_ticker_from_watchlist(watchlist_id, ticker):
             return jsonify(*error_response('NOT_FOUND', 'Ticker not found in watchlist', 404))
     except Exception as e:
         return jsonify(*error_response('WATCHLIST_ERROR', str(e), 500))
+# Serve React App (SPA catch-all route)
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_spa(path):
+    """Serve React SPA - catch all route for frontend"""
+    if path and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', config.get('server', {}).get('port', 5000)))
