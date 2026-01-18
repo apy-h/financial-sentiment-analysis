@@ -12,13 +12,13 @@ echo "========================================="
 # Build the React frontend
 cd frontend
 
-# Install frontend dependencies
-npm install
+# Install ALL dependencies including devDependencies (needed for vite)
+npm install --include=dev
 
 # Build with production API base URL (same server for SPA)
 # Since backend and frontend are on same server, use relative URLs
 export VITE_API_BASE=""
-npm run build
+npx vite build
 
 # Return to root
 cd ..
