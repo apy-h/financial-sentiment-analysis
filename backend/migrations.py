@@ -8,7 +8,7 @@ class DatabaseMigration:
     """Handle database schema migrations"""
     
     VERSION_TABLE = 'schema_version'
-    CURRENT_VERSION = 2  # Version 2 includes all enhanced features
+    CURRENT_VERSION = 3  # Version 3 includes watchlist tables
     
     def __init__(self, db_path='finance_sentiment.db'):
         """
@@ -72,11 +72,15 @@ class DatabaseMigration:
         current_version = self.get_current_version()
         
         if current_version == 0:
-            print("Initializing new database with schema version 2...")
-            self._create_v2_schema()
+            print("Initializing new database with schema version 3...")
+            self._create_v3_schema()
         elif current_version == 1:
-            print("Migrating database from version 1 to 2...")
+            print("Migrating database from version 1 to 3...")
             self._migrate_v1_to_v2()
+            self._migrate_v2_to_v3()
+        elif current_version == 2:
+            print("Migrating database from version 2 to 3...")
+            self._migrate_v2_to_v3()
         elif current_version == self.CURRENT_VERSION:
             print("Database is already at current version")
         else:
@@ -287,3 +291,176 @@ class DatabaseMigration:
                           (self.CURRENT_VERSION,))
             
             print("Database migrated to version 2 successfully")
+    
+    def _create_v3_schema(self):
+        """Create complete version 3 schema from scratch (includes watchlists)"""
+        # First create v2 schema
+        self._create_base_schema()
+        
+        # Then add watchlist tables
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create watchlists table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS watchlists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create watchlist_tickers junction table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS watchlist_tickers (
+                    watchlist_id INTEGER NOT NULL,
+                    ticker TEXT NOT NULL,
+                    added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (watchlist_id, ticker),
+                    FOREIGN KEY (watchlist_id) REFERENCES watchlists(id) ON DELETE CASCADE
+                )
+            ''')
+            
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_watchlist_tickers_watchlist ON watchlist_tickers(watchlist_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_watchlist_tickers_ticker ON watchlist_tickers(ticker)')
+            
+            # Update version to 3
+            cursor.execute(f'UPDATE {self.VERSION_TABLE} SET version = ?', (3,))
+            
+            print("Database schema version 3 created successfully")
+    
+    def _create_base_schema(self):
+        """Create base schema (v2) without watchlists"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create version table
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {self.VERSION_TABLE} (
+                    version INTEGER NOT NULL
+                )
+            ''')
+            cursor.execute(f'INSERT INTO {self.VERSION_TABLE} (version) VALUES (?)', (2,))
+            
+            # Create posts table with all fields
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS posts (
+                    id TEXT PRIMARY KEY,
+                    reddit_id TEXT UNIQUE,
+                    url TEXT,
+                    subreddit TEXT,
+                    title TEXT,
+                    text TEXT NOT NULL,
+                    author TEXT,
+                    created_at TEXT NOT NULL,
+                    timezone TEXT,
+                    sentiment_label TEXT NOT NULL,
+                    sentiment_score REAL NOT NULL,
+                    sentiment_scores TEXT NOT NULL,
+                    analyzed_at TEXT NOT NULL
+                )
+            ''')
+            
+            # Create indexes for posts
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON posts(created_at DESC)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_sentiment_label ON posts(sentiment_label)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_subreddit ON posts(subreddit)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_url ON posts(url)')
+            
+            # Create sectors table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sectors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL
+                )
+            ''')
+            
+            # Create industries table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS industries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL
+                )
+            ''')
+            
+            # Create tickers table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS tickers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT UNIQUE NOT NULL,
+                    company_name TEXT,
+                    sector_id INTEGER,
+                    industry_id INTEGER,
+                    FOREIGN KEY (sector_id) REFERENCES sectors(id),
+                    FOREIGN KEY (industry_id) REFERENCES industries(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_ticker_symbol ON tickers(symbol)')
+            
+            # Create junction tables for many-to-many relationships
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS post_tickers (
+                    post_id TEXT NOT NULL,
+                    ticker_id INTEGER NOT NULL,
+                    PRIMARY KEY (post_id, ticker_id),
+                    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+                    FOREIGN KEY (ticker_id) REFERENCES tickers(id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_post_tickers_post ON post_tickers(post_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_post_tickers_ticker ON post_tickers(ticker_id)')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS post_industries (
+                    post_id TEXT NOT NULL,
+                    industry_id INTEGER NOT NULL,
+                    PRIMARY KEY (post_id, industry_id),
+                    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+                    FOREIGN KEY (industry_id) REFERENCES industries(id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_post_industries_post ON post_industries(post_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_post_industries_industry ON post_industries(industry_id)')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS post_sectors (
+                    post_id TEXT NOT NULL,
+                    sector_id INTEGER NOT NULL,
+                    PRIMARY KEY (post_id, sector_id),
+                    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+                    FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_post_sectors_post ON post_sectors(post_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_post_sectors_sector ON post_sectors(sector_id)')
+    
+    def _migrate_v2_to_v3(self):
+        """Migrate from version 2 to version 3 (add watchlist tables)"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create watchlists table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS watchlists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create watchlist_tickers junction table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS watchlist_tickers (
+                    watchlist_id INTEGER NOT NULL,
+                    ticker TEXT NOT NULL,
+                    added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (watchlist_id, ticker),
+                    FOREIGN KEY (watchlist_id) REFERENCES watchlists(id) ON DELETE CASCADE
+                )
+            ''')
+            
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_watchlist_tickers_watchlist ON watchlist_tickers(watchlist_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_watchlist_tickers_ticker ON watchlist_tickers(ticker)')
+            
+            # Update schema version
+            cursor.execute(f'UPDATE {self.VERSION_TABLE} SET version = ?', (3,))
