@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from sentiment_analyzer import SentimentAnalyzer
 from reddit_rss_client import RedditRSSClient
@@ -14,7 +14,9 @@ import os
 import json
 from datetime import datetime
 
-app = Flask(__name__)
+# Configure Flask to serve static files from frontend build
+static_folder = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
+app = Flask(__name__, static_folder=static_folder, static_url_path='')
 
 # Load configuration
 def load_config():
@@ -469,6 +471,16 @@ def get_volume_sentiment_correlation():
         return jsonify(*error_response('INVALID_PARAM', str(e)))
     except Exception as e:
         return jsonify(*error_response('DATABASE_ERROR', str(e), 500))
+
+# Serve React App (SPA catch-all route)
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_spa(path):
+    """Serve React SPA - catch all route for frontend"""
+    if path and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', config.get('server', {}).get('port', 5000)))
